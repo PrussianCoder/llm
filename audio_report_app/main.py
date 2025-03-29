@@ -1,23 +1,26 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
-# !/usr/bin/env python3
 """
 音声ファイル処理アプリケーション
 """
 import os
 import sys
+import traceback
+from typing import Callable, Dict, List
 
 # インポートパスを修正
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-
+# まず最初にStreamlitをインポート
 import streamlit as st
 
-# 最初にページ設定を行う（これが最初のStreamlit命令である必要がある）
+# 最初のStreamlit命令としてページ設定を行う
 st.set_page_config(page_title="会議記録レポート生成ツール", page_icon="🎙️", layout="wide")
 
+# その他のimportはページ設定の後に行う
 from dotenv import load_dotenv
 from interfaces.i_audio_processor import IAudioProcessor
 from services.session_manager import SessionManager
@@ -38,7 +41,7 @@ try:
 except Exception as e:
     print(f"pydubフォールバックの設定に失敗しました: {str(e)}")
 
-# 環境変数を読み込む
+# 環境変数のロード
 load_dotenv()
 
 # ロギングの設定
