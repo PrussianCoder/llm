@@ -58,7 +58,7 @@ except Exception as e:
     traceback.print_exc()
 
 # 簡易テストモード
-TEST_MODE = False
+TEST_MODE = True
 
 if TEST_MODE:
     # シンプルなテストアプリを表示
