@@ -75,8 +75,11 @@ class TextService(ITextProcessor):
         try:
             logger.info(f"OpenAIに{report_type}の生成をリクエスト中...")
 
-            # OpenAIクライアントの初期化
-            client = OpenAI(api_key=openai_api_key)
+            # OpenAIクライアントの初期化（proxiesパラメータなし）
+            os.environ["OPENAI_API_KEY"] = openai_api_key
+            client = OpenAI()
+            if "OPENAI_API_KEY" in os.environ:
+                del os.environ["OPENAI_API_KEY"]
 
             # API呼び出し
             response = client.chat.completions.create(
@@ -156,8 +159,11 @@ class TextService(ITextProcessor):
             {report}
             """
 
-            # OpenAIクライアントの初期化
-            client = OpenAI(api_key=openai_api_key)
+            # OpenAIクライアントの初期化（proxiesパラメータなし）
+            os.environ["OPENAI_API_KEY"] = openai_api_key
+            client = OpenAI()
+            if "OPENAI_API_KEY" in os.environ:
+                del os.environ["OPENAI_API_KEY"]
 
             # API呼び出し
             response = client.chat.completions.create(
