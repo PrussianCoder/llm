@@ -14,6 +14,7 @@ transformers>=4.36.0
 faster-whisper>=0.10.0
 torch>=2.0.0
 torchaudio>=2.0.0
+openai-whisper>=20231117
 
 # Optional for Sphinx
 pocketsphinx>=5.0.0
