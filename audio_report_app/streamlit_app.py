@@ -79,7 +79,7 @@ except Exception as e:
     traceback.print_exc()
 
 # 簡易テストモード
-TEST_MODE = True
+TEST_MODE = False
 
 if TEST_MODE:
     try:
