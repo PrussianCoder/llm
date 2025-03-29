@@ -86,6 +86,11 @@ class AudioProcessorV2(IAudioProcessor):
             logger.info(f"音声ファイルの処理を開始します: {file_path}")
             logger.info(f"使用するエンジン: {engine}, 言語: {language}")
 
+            # ファイルの存在チェック
+            if not os.path.exists(file_path):
+                logger.error(f"ファイルが存在しません: {file_path}")
+                return "", [], []
+
             # FFmpegの利用可能性をチェック
             ffmpeg_available = self._check_ffmpeg_available()
             if not ffmpeg_available:
@@ -101,34 +106,65 @@ class AudioProcessorV2(IAudioProcessor):
                     )
 
             # 音声ファイルの読み込み
-            audio_data = self._load_audio_file(file_path, start_minute, end_minute)
+            try:
+                logger.info(f"音声ファイルを読み込み中: {file_path}")
+                audio_data = self._load_audio_file(file_path, start_minute, end_minute)
+                logger.info(
+                    f"音声ファイルの読み込みに成功しました: 長さ {len(audio_data)/1000:.2f}秒"
+                )
+            except Exception as e:
+                logger.error(f"音声ファイルの読み込みに失敗しました: {str(e)}")
+                return "", [], []
 
             # 音声の前処理
-            preprocessed_audio = self.preprocess_audio(
-                audio_data, reduce_noise, remove_silence, audio_enhancement
-            )
+            try:
+                logger.info("音声の前処理を開始します...")
+                preprocessed_audio = self.preprocess_audio(
+                    audio_data, reduce_noise, remove_silence, audio_enhancement
+                )
+                logger.info(
+                    f"音声の前処理が完了しました: 処理後の長さ {len(preprocessed_audio)/1000:.2f}秒"
+                )
+            except Exception as e:
+                logger.error(f"音声の前処理に失敗しました: {str(e)}")
+                # 前処理に失敗した場合は元の音声データを使用
+                preprocessed_audio = audio_data
+                logger.info("前処理をスキップし、オリジナルの音声を使用します")
 
-            # 音声をチャンクに分割
-            chunks = self.split_audio_into_chunks(
-                preprocessed_audio,
-                min_silence_len=500,
-                silence_thresh=-40,
-                max_chunk_duration=chunk_duration * 1000,  # 秒からミリ秒に変換
-                long_speech_mode=long_speech_mode,
-            )
-
-            logger.info(f"音声を {len(chunks)} 個のチャンクに分割しました")
+            # チャンクへの分割
+            try:
+                logger.info("音声のチャンク分割を開始します...")
+                chunks = self.split_audio_into_chunks(
+                    preprocessed_audio,
+                    max_chunk_duration=chunk_duration * 1000,  # 秒からミリ秒に変換
+                    long_speech_mode=long_speech_mode,
+                )
+                logger.info(f"音声を {len(chunks)} チャンクに分割しました")
+            except Exception as e:
+                logger.error(f"音声のチャンク分割に失敗しました: {str(e)}")
+                # チャンク分割に失敗した場合は単一チャンクとして扱う
+                chunks = [preprocessed_audio]
+                logger.info("チャンク分割をスキップし、単一チャンクとして処理します")
 
             # 各チャンクを認識
             chunk_results = []
 
-            if parallel_processing and len(chunks) > 1:
+            # 処理するチャンクのインデックスリスト
+            chunk_indices = list(range(len(chunks)))
+
+            # 並列処理の設定
+            if parallel_processing and len(chunk_indices) > 1:
                 logger.info(f"並列処理を開始します（ワーカー数: {max_workers}）")
 
                 # 並列処理用の関数
-                def process_chunk(idx_chunk):
-                    idx, chunk = idx_chunk
+                def process_chunk(chunk_idx):
                     try:
+                        chunk = chunks[chunk_idx]
+                        logger.info(
+                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
+                        )
+
+                        # チャンク認識
                         result = self._recognize_chunk(
                             chunk,
                             engine=engine,
@@ -139,28 +175,32 @@ class AudioProcessorV2(IAudioProcessor):
                             whisper_detect_language=whisper_detect_language,
                         )
 
-                        # コールバック関数の呼び出し
+                        # コールバック関数があれば呼び出し（リアルタイムモード用）
                         if on_chunk_processed:
-                            on_chunk_processed(
-                                idx, len(chunks), result, len(chunk) / 1000.0  # ミリ秒から秒に変換
-                            )
+                            on_chunk_processed(chunk_idx, len(chunks), result, len(chunk) / 1000)
 
+                        logger.info(
+                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
+                        )
                         return result
                     except Exception as e:
-                        logger.error(f"チャンク {idx + 1} の処理中にエラー: {str(e)}")
+                        logger.error(
+                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}"
+                        )
                         return ""
 
-                # ThreadPoolExecutorを使用した並列処理
+                # 並列処理実行
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # インデックス付きのチャンクリストを作成
-                    indexed_chunks = list(enumerate(chunks))
-                    # 並列実行
-                    chunk_results = list(executor.map(process_chunk, indexed_chunks))
+                    chunk_results = list(executor.map(process_chunk, chunk_indices))
             else:
                 logger.info("逐次処理を開始します")
-
-                for i, chunk in enumerate(chunks):
+                for idx, chunk in enumerate(chunks):
                     try:
+                        logger.info(
+                            f"チャンク {idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
+                        )
+
+                        # チャンク認識
                         result = self._recognize_chunk(
                             chunk,
                             engine=engine,
@@ -170,22 +210,37 @@ class AudioProcessorV2(IAudioProcessor):
                             whisper_model_size=whisper_model_size,
                             whisper_detect_language=whisper_detect_language,
                         )
-                        chunk_results.append(result)
 
-                        # コールバック関数の呼び出し
+                        # コールバック関数があれば呼び出し（リアルタイムモード用）
                         if on_chunk_processed:
-                            on_chunk_processed(
-                                i, len(chunks), result, len(chunk) / 1000.0  # ミリ秒から秒に変換
-                            )
+                            on_chunk_processed(idx, len(chunks), result, len(chunk) / 1000)
+
+                        chunk_results.append(result)
+                        logger.info(
+                            f"チャンク {idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
+                        )
                     except Exception as e:
-                        logger.error(f"チャンク {i + 1} の処理中にエラー: {str(e)}")
+                        logger.error(
+                            f"チャンク {idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}"
+                        )
                         chunk_results.append("")
 
-            # 結果の統合
-            transcript = " ".join(chunk_results).strip()
+            # 全チャンク結果を結合
+            transcript = " ".join(chunk_results)
+            logger.info(
+                f"全チャンクの処理が完了しました。合計文字数: {len(transcript)}, 単語数: {len(transcript.split())}"
+            )
 
             # 重複パターンの修正
             transcript = self._fix_repetition_patterns(transcript)
+            logger.info(
+                f"重複パターン修正後 - 合計文字数: {len(transcript)}, 単語数: {len(transcript.split())}"
+            )
+
+            # 空の文字起こし結果の場合はエラーメッセージを返す
+            if not transcript.strip():
+                logger.error("全てのチャンクの文字起こしに失敗しました。結果が空です。")
+                transcript = "音声認識に失敗しました。ファイル形式や音声品質を確認してください。"
 
             logger.info("音声処理が完了しました")
             return transcript, chunks, chunk_results
@@ -197,19 +252,19 @@ class AudioProcessorV2(IAudioProcessor):
 
     def _recognize_chunk(
         self,
-        audio_chunk: AudioSegment,
-        engine: str,
-        language: str,
-        recognition_attempts: int,
-        min_word_count: int,
-        whisper_model_size: str,
-        whisper_detect_language: bool,
+        chunk: AudioSegment,
+        engine: str = "Whisper",
+        language: str = "ja-JP",
+        recognition_attempts: int = 3,
+        min_word_count: int = 3,
+        whisper_model_size: str = "base",
+        whisper_detect_language: bool = False,
     ) -> str:
         """
         音声チャンクを認識する
 
         Args:
-            audio_chunk: 認識する音声チャンク
+            chunk: 認識する音声チャンク
             engine: 使用する音声認識エンジン
             language: 認識する言語コード
             recognition_attempts: 認識試行回数
@@ -218,67 +273,84 @@ class AudioProcessorV2(IAudioProcessor):
             whisper_detect_language: 言語を自動検出するかどうか
 
         Returns:
-            str: 認識結果のテキスト
+            str: 認識結果テキスト
         """
-        # 音声チャンクをWAVに変換
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            audio_chunk.export(f.name, format="wav")
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(f"チャンクの認識を開始: エンジン={engine}, 言語={language}")
 
-            # 認識結果を保存する変数
-            best_result = ""
-            best_word_count = 0
+        # 認識結果
+        best_result = ""
+        best_word_count = 0
 
-            # 指定された回数だけ認識を試行
-            for attempt in range(recognition_attempts):
-                try:
-                    with sr.AudioFile(f.name) as source:
-                        audio = self.recognizer.record(source)
+        # 短いチャンクは処理しない（無音など）
+        if len(chunk) < 500:  # 500ミリ秒未満
+            logger.warning(f"チャンクが短すぎるためスキップ: {len(chunk)}ms")
+            return ""
 
-                        # エンジンに応じて認識処理を分岐
-                        if engine == "Whisper":
-                            result = self.recognizer.recognize_whisper(
-                                audio,
-                                model=whisper_model_size,
-                                language=None if whisper_detect_language else language,
-                            )
-                        elif engine == "Google":
-                            result = self.recognizer.recognize_google(audio, language=language)
-                        elif engine == "FasterWhisper":
-                            result = self.recognizer.recognize_faster_whisper(
-                                audio,
-                                model=whisper_model_size,
-                                language=None if whisper_detect_language else language,
-                            )
-                        else:
-                            # デフォルトはWhisper
-                            result = self.recognizer.recognize_whisper(
-                                audio,
-                                model=whisper_model_size,
-                                language=None if whisper_detect_language else language,
-                            )
+        # 言語コードの調整（Whisperは2文字コード、GoogleとSphinxは地域コードあり）
+        lang_code = language
+        if engine.lower().startswith("whisper"):
+            # Whisper用の言語コード調整
+            if "-" in language:
+                lang_code = language.split("-")[0]
+            logger.info(f"Whisperに適した言語コードに調整: {language} -> {lang_code}")
 
-                        # 単語数をカウント
-                        word_count = len(result.split())
-
-                        # 結果が良ければ更新
-                        if word_count > best_word_count:
-                            best_result = result
-                            best_word_count = word_count
-
-                            # 指定した単語数を超えたら早期終了
-                            if best_word_count >= min_word_count:
-                                break
-
-                except Exception as e:
-                    logger.warning(f"認識試行 {attempt + 1} で例外が発生: {str(e)}")
-
-            # 一時ファイルの削除
+        # 選択されたエンジンで認識
+        for attempt in range(recognition_attempts):
             try:
-                os.unlink(f.name)
-            except:
-                pass
+                logger.info(f"認識試行 {attempt + 1}/{recognition_attempts}")
 
+                if engine == "Sphinx":
+                    result = self._recognize_sphinx(chunk, language)
+                elif engine == "Google":
+                    result = self._recognize_google(chunk, language)
+                elif engine == "Whisper":
+                    result = self._recognize_with_whisper(
+                        chunk, lang_code, whisper_model_size, whisper_detect_language
+                    )
+                elif engine == "FasterWhisper":
+                    result = self._recognize_with_faster_whisper(
+                        chunk, lang_code, whisper_model_size, whisper_detect_language
+                    )
+                else:
+                    # デフォルトのエンジンとしてWhisperを使用
+                    logger.warning(f"未知のエンジン: {engine}, Whisperを使用します")
+                    result = self._recognize_with_whisper(
+                        chunk, lang_code, whisper_model_size, whisper_detect_language
+                    )
+
+                # 認識結果を整形（余分な空白の削除など）
+                result = self._format_recognition_result(result)
+
+                # 単語数をカウント
+                word_count = len(result.split())
+
+                logger.info(
+                    f"認識結果: {word_count}単語 ('{result[:50]}{'...' if len(result) > 50 else ''}')"
+                )
+
+                # より多くの単語を含む結果を保持
+                if word_count > best_word_count:
+                    best_result = result
+                    best_word_count = word_count
+                    logger.info(f"より良い結果を更新: {best_word_count}単語")
+
+                # 十分な単語数があれば早期終了
+                if word_count >= min_word_count:
+                    logger.info(f"十分な単語数 ({word_count} >= {min_word_count}) のため認識を終了")
+                    break
+
+            except Exception as e:
+                logger.error(f"認識試行 {attempt + 1} で例外が発生: {str(e)}")
+                # 続行して他の試行を実行
+
+        # 最終的な結果を返す
+        if best_word_count > 0:
+            logger.info(f"チャンク認識完了: {best_word_count}単語")
             return best_result
+        else:
+            logger.warning("チャンク認識に失敗: 有効な結果なし")
+            return ""
 
     def _fix_repetition_patterns(self, text: str) -> str:
         """
