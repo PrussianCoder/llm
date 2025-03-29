@@ -14,6 +14,10 @@ sys.path.append(parent_dir)
 
 
 import streamlit as st
+
+# 最初にページ設定を行う（これが最初のStreamlit命令である必要がある）
+st.set_page_config(page_title="会議記録レポート生成ツール", page_icon="🎙️", layout="wide")
+
 from dotenv import load_dotenv
 from interfaces.i_audio_processor import IAudioProcessor
 from services.session_manager import SessionManager
@@ -95,8 +99,11 @@ class AudioReportApp:
     def run(self) -> None:
         """アプリケーションを実行する"""
         try:
-            # ページ設定
-            self.ui.setup_page()
+            # タイトルなどを設定（ページ設定はmain.pyの先頭で行う）
+            st.title(f"🎙️ 会議記録レポート生成ツール")
+            st.write(
+                "MP3形式の会議録やMP4形式の動画をアップロードして、AI要約レポートを生成します。"
+            )
 
             # サイドバーの設定（APIキー取得の前に実行）
             settings = self.ui.setup_sidebar()

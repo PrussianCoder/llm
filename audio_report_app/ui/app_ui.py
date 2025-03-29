@@ -25,17 +25,6 @@ class AppUI:
         self.report_component = ReportComponent.create()
         self.chat_component = ChatComponent.create()
 
-    def setup_page(self, title: str = "会議記録レポート生成ツール") -> None:
-        """
-        ページの基本設定を行う
-
-        Args:
-            title: ページタイトル
-        """
-        st.set_page_config(page_title=title, page_icon="🎙️", layout="wide")
-        st.title(f"🎙️ {title}")
-        st.write("MP3形式の会議録やMP4形式の動画をアップロードして、AI要約レポートを生成します。")
-
     def setup_sidebar(self) -> Dict[str, Any]:
         """
         サイドバーのUI要素をセットアップする
