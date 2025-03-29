@@ -253,34 +253,99 @@ class AudioProcessorV2(IAudioProcessor):
     ) -> List[str]:
         """チャンクを処理して認識結果を返す"""
         chunk_results = []
-        chunk_indices = list(range(len(chunks)))
 
-        # 並列処理の場合
-        if parallel_processing and len(chunk_indices) > 1:
-            chunk_results = self._process_chunks_parallel(
-                chunks,
-                chunk_indices,
+        logger.info(f"チャンク処理を開始します: 全{len(chunks)}個のチャンク")
+
+        # 最初のチャンクは常に逐次処理する
+        if len(chunks) > 0:
+            logger.info(f"最初のチャンク（{len(chunks[0])/1000:.2f}秒）を逐次処理します")
+            first_chunk_result = self._process_chunks_sequential(
+                [chunks[0]],  # 最初のチャンクのみ
                 engine,
                 language,
                 recognition_attempts,
                 min_word_count,
-                max_workers,
                 on_chunk_processed,
                 whisper_model_size,
                 whisper_detect_language,
             )
+            chunk_results.extend(first_chunk_result)
+            logger.info(
+                f"最初のチャンクの処理が完了しました: {len(first_chunk_result[0].split())}単語認識"
+            )
+
+            # 残りのチャンクを処理
+            remaining_chunks = chunks[1:]
+            chunk_indices = list(range(len(remaining_chunks)))
+
+            # 残りのチャンクがある場合
+            if remaining_chunks:
+                logger.info(f"残り{len(remaining_chunks)}個のチャンクを処理します")
+                # 並列処理の場合（2つ目以降のチャンク）
+                if parallel_processing and len(remaining_chunks) > 1:
+                    logger.info(
+                        f"2つ目以降のチャンク（合計{len(remaining_chunks)}個）を並列処理します（ワーカー数: {max_workers}）"
+                    )
+
+                    # コールバック関数を修正
+                    adjusted_callback = None
+                    if on_chunk_processed:
+                        # インデックスを調整し、正しいインデックスとトータル数を渡す
+                        def adjusted_callback(idx, total, result, duration):
+                            real_idx = idx + 1  # 最初のチャンクを考慮
+                            logger.debug(
+                                f"コールバック呼び出し: チャンク {real_idx}/{len(chunks)}, 長さ: {duration:.2f}秒"
+                            )
+                            # インデックスに1を足して、トータルは元のチャンク数を使用
+                            on_chunk_processed(real_idx, len(chunks), result, duration)
+
+                    remaining_results = self._process_chunks_parallel(
+                        remaining_chunks,
+                        chunk_indices,
+                        engine,
+                        language,
+                        recognition_attempts,
+                        min_word_count,
+                        max_workers,
+                        adjusted_callback,
+                        whisper_model_size,
+                        whisper_detect_language,
+                    )
+                else:
+                    # 逐次処理の場合
+                    logger.info(
+                        f"2つ目以降のチャンク（合計{len(remaining_chunks)}個）を逐次処理します"
+                    )
+
+                    # コールバック関数を修正
+                    adjusted_callback = None
+                    if on_chunk_processed:
+                        # インデックスを調整し、正しいインデックスとトータル数を渡す
+                        def adjusted_callback(idx, total, result, duration):
+                            real_idx = idx + 1  # 最初のチャンクを考慮
+                            logger.debug(
+                                f"コールバック呼び出し: チャンク {real_idx}/{len(chunks)}, 長さ: {duration:.2f}秒"
+                            )
+                            # インデックスに1を足して、トータルは元のチャンク数を使用
+                            on_chunk_processed(real_idx, len(chunks), result, duration)
+
+                    remaining_results = self._process_chunks_sequential(
+                        remaining_chunks,
+                        engine,
+                        language,
+                        recognition_attempts,
+                        min_word_count,
+                        adjusted_callback,
+                        whisper_model_size,
+                        whisper_detect_language,
+                    )
+
+                chunk_results.extend(remaining_results)
+                logger.info(
+                    f"残りのチャンク処理が完了しました。全{len(chunk_results)}個のチャンク処理完了"
+                )
         else:
-            # 逐次処理の場合
-            chunk_results = self._process_chunks_sequential(
-                chunks,
-                engine,
-                language,
-                recognition_attempts,
-                min_word_count,
-                on_chunk_processed,
-                whisper_model_size,
-                whisper_detect_language,
-            )
+            logger.warning("処理するチャンクがありません")
 
         return chunk_results
 
