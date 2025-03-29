@@ -1,5 +1,6 @@
-#!/usr/bin/env python3
 from __future__ import annotations
+
+#!/usr/bin/env python3
 
 """
 音声ファイル処理アプリケーション
@@ -17,9 +18,8 @@ sys.path.append(parent_dir)
 # まず最初にStreamlitをインポート
 import streamlit as st
 
-# 最初のStreamlit命令としてページ設定を行う
-st.set_page_config(page_title="会議記録レポート生成ツール", page_icon="🎙️", layout="wide")
-
+# 注意: ページ設定はstreamlit_app.pyで行うため、ここではコメントアウト
+# st.set_page_config(page_title="会議記録レポート生成ツール", page_icon="🎙️", layout="wide")
 # その他のimportはページ設定の後に行う
 from dotenv import load_dotenv
 from interfaces.i_audio_processor import IAudioProcessor
@@ -269,7 +269,7 @@ class AudioReportApp:
 
 # 実行エントリポイント
 if __name__ == "__main__":
-    from services.audio_processor import (
+    from audio_report_app.services.audio_processor import (
         AudioProcessorV2,
     )  # 正しいインポートパスに修正
 
