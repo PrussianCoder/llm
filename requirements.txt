@@ -11,7 +11,7 @@ pydantic>=2.0.0
 ffmpeg-python>=0.2.0
 SpeechRecognition>=3.10.0
 transformers>=4.36.0
-faster-whisper==0.8.0
+faster-whisper>=0.10.0
 torch>=2.0.0
 torchaudio>=2.0.0
 openai-whisper>=20231117
