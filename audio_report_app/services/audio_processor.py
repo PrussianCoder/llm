@@ -352,6 +352,125 @@ class AudioProcessorV2(IAudioProcessor):
             logger.warning("チャンク認識に失敗: 有効な結果なし")
             return ""
 
+    def _recognize_sphinx(self, chunk: AudioSegment, language: str) -> str:
+        """Sphinxエンジンを使用した音声認識"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(f"Sphinxエンジンで認識を開始: 言語={language}")
+
+        # 音声チャンクをWAVに変換
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            chunk.export(f.name, format="wav")
+
+            try:
+                with sr.AudioFile(f.name) as source:
+                    audio = self.recognizer.record(source)
+                    result = self.recognizer.recognize_sphinx(audio, language=language)
+                    return result
+            except Exception as e:
+                logger.error(f"Sphinx認識中にエラーが発生: {str(e)}")
+                return ""
+            finally:
+                # 一時ファイルの削除
+                try:
+                    os.unlink(f.name)
+                except:
+                    pass
+
+    def _recognize_google(self, chunk: AudioSegment, language: str) -> str:
+        """Googleエンジンを使用した音声認識"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(f"Googleエンジンで認識を開始: 言語={language}")
+
+        # 音声チャンクをWAVに変換
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            chunk.export(f.name, format="wav")
+
+            try:
+                with sr.AudioFile(f.name) as source:
+                    audio = self.recognizer.record(source)
+                    result = self.recognizer.recognize_google(audio, language=language)
+                    return result
+            except Exception as e:
+                logger.error(f"Google認識中にエラーが発生: {str(e)}")
+                return ""
+            finally:
+                # 一時ファイルの削除
+                try:
+                    os.unlink(f.name)
+                except:
+                    pass
+
+    def _recognize_with_whisper(
+        self, chunk: AudioSegment, language: str, model_size: str, detect_language: bool
+    ) -> str:
+        """Whisperエンジンを使用した音声認識"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(
+            f"Whisperエンジンで認識を開始: 言語={language}, モデル={model_size}, 言語検出={detect_language}"
+        )
+
+        # 音声チャンクをWAVに変換
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            chunk.export(f.name, format="wav")
+
+            try:
+                with sr.AudioFile(f.name) as source:
+                    audio = self.recognizer.record(source)
+                    result = self.recognizer.recognize_whisper(
+                        audio, model=model_size, language=None if detect_language else language
+                    )
+                    logger.info(f"Whisper認識完了: {len(result.split())}単語")
+                    return result
+            except Exception as e:
+                logger.error(f"Whisper認識中にエラーが発生: {str(e)}")
+                return ""
+            finally:
+                # 一時ファイルの削除
+                try:
+                    os.unlink(f.name)
+                except:
+                    pass
+
+    def _recognize_with_faster_whisper(
+        self, chunk: AudioSegment, language: str, model_size: str, detect_language: bool
+    ) -> str:
+        """FasterWhisperエンジンを使用した音声認識"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(
+            f"FasterWhisperエンジンで認識を開始: 言語={language}, モデル={model_size}, 言語検出={detect_language}"
+        )
+
+        # 音声チャンクをWAVに変換
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            chunk.export(f.name, format="wav")
+
+            try:
+                with sr.AudioFile(f.name) as source:
+                    audio = self.recognizer.record(source)
+                    result = self.recognizer.recognize_faster_whisper(
+                        audio, model=model_size, language=None if detect_language else language
+                    )
+                    logger.info(f"FasterWhisper認識完了: {len(result.split())}単語")
+                    return result
+            except Exception as e:
+                logger.error(f"FasterWhisper認識中にエラーが発生: {str(e)}")
+                return ""
+            finally:
+                # 一時ファイルの削除
+                try:
+                    os.unlink(f.name)
+                except:
+                    pass
+
+    def _format_recognition_result(self, text: str) -> str:
+        """認識結果のテキストを整形する"""
+        if not text:
+            return ""
+
+        # 余分な空白を削除
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
     def _fix_repetition_patterns(self, text: str) -> str:
         """
         テキスト内の繰り返しパターンを検出して修正する
