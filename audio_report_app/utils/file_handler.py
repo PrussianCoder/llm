@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any, BinaryIO
+from typing import Any
 
-import streamlit as st
 from utils.logging_config import LoggingConfig
 
 # ロガーの取得

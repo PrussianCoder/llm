@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-from interfaces.i_ui_component import IUIComponent
 from pydub import AudioSegment
 
 from ui.chat_component import ChatComponent

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
 import subprocess
 import tempfile
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import speech_recognition as sr
 from interfaces.i_audio_processor import IAudioProcessor
@@ -149,7 +147,7 @@ class AudioProcessorV2(IAudioProcessor):
 
                         return result
                     except Exception as e:
-                        logger.error(f"チャンク {idx+1} の処理中にエラー: {str(e)}")
+                        logger.error(f"チャンク {idx + 1} の処理中にエラー: {str(e)}")
                         return ""
 
                 # ThreadPoolExecutorを使用した並列処理
@@ -180,7 +178,7 @@ class AudioProcessorV2(IAudioProcessor):
                                 i, len(chunks), result, len(chunk) / 1000.0  # ミリ秒から秒に変換
                             )
                     except Exception as e:
-                        logger.error(f"チャンク {i+1} の処理中にエラー: {str(e)}")
+                        logger.error(f"チャンク {i + 1} の処理中にエラー: {str(e)}")
                         chunk_results.append("")
 
             # 結果の統合
@@ -272,7 +270,7 @@ class AudioProcessorV2(IAudioProcessor):
                                 break
 
                 except Exception as e:
-                    logger.warning(f"認識試行 {attempt+1} で例外が発生: {str(e)}")
+                    logger.warning(f"認識試行 {attempt + 1} で例外が発生: {str(e)}")
 
             # 一時ファイルの削除
             try:
@@ -679,7 +677,7 @@ class AudioProcessorV2(IAudioProcessor):
                     if len(chunk) >= min_chunk_length:
                         chunks.append(chunk)
                         logger.info(
-                            f"チャンク {i+1}/{len(start_positions)} 作成: {len(chunk)/1000:.1f}秒 ({start_ms/1000:.1f}〜{end_ms/1000:.1f}秒)"
+                            f"チャンク {i + 1}/{len(start_positions)} 作成: {len(chunk) / 1000:.1f}秒 ({start_ms / 1000:.1f}〜{end_ms / 1000:.1f}秒)"
                         )
             else:
                 # 無音検出による分割
@@ -698,7 +696,7 @@ class AudioProcessorV2(IAudioProcessor):
                 for i, chunk in enumerate(chunks):
                     if len(chunk) > max_chunk_duration:
                         logger.info(
-                            f"チャンク {i+1} は長すぎるため再分割します: {len(chunk)/1000:.1f}秒"
+                            f"チャンク {i + 1} は長すぎるため再分割します: {len(chunk) / 1000:.1f}秒"
                         )
                         # チャンクが長すぎる場合は固定長で再分割
                         subchunks = [

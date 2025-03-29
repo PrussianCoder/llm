@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 """
 音声ファイル処理アプリケーション
 """
@@ -13,14 +13,9 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 
-import traceback
-from typing import Callable, Dict, List
-
 import streamlit as st
 from dotenv import load_dotenv
 from interfaces.i_audio_processor import IAudioProcessor
-from interfaces.i_session_manager import ISessionManager
-from interfaces.i_text_processor import ITextProcessor
 from services.session_manager import SessionManager
 from services.text_service import TextService
 from utils.error_handler import ErrorHandler
