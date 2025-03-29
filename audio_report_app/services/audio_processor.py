@@ -102,10 +102,10 @@ class AudioProcessorV2(IAudioProcessor):
         Returns:
             Tuple[str, List[AudioSegment], List[str]]: (transcript, chunks, chunk_results) - 文字起こし結果、チャンクリスト、チャンク結果リスト
         """
-        try:
-            logger.info(f"音声ファイルの処理を開始します: {file_path}")
-            logger.info(f"使用するエンジン: {engine}, 言語: {language}")
+        logger.info(f"音声ファイルの処理を開始します: {file_path}")
+        logger.info(f"使用するエンジン: {engine}, 言語: {language}")
 
+        try:
             # ファイルの存在チェック
             if not os.path.exists(file_path):
                 logger.error(f"ファイルが存在しません: {file_path}")
@@ -113,137 +113,36 @@ class AudioProcessorV2(IAudioProcessor):
 
             # FFmpegの利用可能性をチェック
             ffmpeg_available = self._check_ffmpeg_available()
-            if not ffmpeg_available:
-                logger.warning(
-                    "FFmpegが利用できないため、一部の機能が制限されます。mp3/mp4ファイルの処理やノイズ削減が制限される可能性があります。"
-                )
-                logger.warning("これはStreamlit Cloudでの制限である可能性があります。")
-
-                # 可能であれば.wavファイルを使用することを推奨
-                if os.path.splitext(file_path)[1].lower() not in [".wav"]:
-                    logger.warning(
-                        "FFmpegがない環境では.wavファイルの使用を推奨します。mp3/mp4ファイルの処理が失敗する可能性があります。"
-                    )
+            self._log_ffmpeg_status(ffmpeg_available, file_path)
 
             # 音声ファイルの読み込み
-            try:
-                logger.info(f"音声ファイルを読み込み中: {file_path}")
-                audio_data = self._load_audio_file(file_path, start_minute, end_minute)
-                logger.info(
-                    f"音声ファイルの読み込みに成功しました: 長さ {len(audio_data)/1000:.2f}秒"
-                )
-            except Exception as e:
-                logger.error(f"音声ファイルの読み込みに失敗しました: {str(e)}")
+            audio_data = self._load_audio_file_safely(file_path, start_minute, end_minute)
+            if not audio_data:
                 return "", [], []
 
             # 音声の前処理
-            try:
-                logger.info("音声の前処理を開始します...")
-                preprocessed_audio = self.preprocess_audio(
-                    audio_data, reduce_noise, remove_silence, audio_enhancement
-                )
-                logger.info(
-                    f"音声の前処理が完了しました: 処理後の長さ {len(preprocessed_audio)/1000:.2f}秒"
-                )
-            except Exception as e:
-                logger.error(f"音声の前処理に失敗しました: {str(e)}")
-                # 前処理に失敗した場合は元の音声データを使用
-                preprocessed_audio = audio_data
-                logger.info("前処理をスキップし、オリジナルの音声を使用します")
+            preprocessed_audio = self._preprocess_audio_safely(
+                audio_data, reduce_noise, remove_silence, audio_enhancement
+            )
 
             # チャンクへの分割
-            try:
-                logger.info("音声のチャンク分割を開始します...")
-                chunks = self.split_audio_into_chunks(
-                    preprocessed_audio,
-                    max_chunk_duration=chunk_duration * 1000,  # 秒からミリ秒に変換
-                    long_speech_mode=long_speech_mode,
-                )
-                logger.info(f"音声を {len(chunks)} チャンクに分割しました")
-            except Exception as e:
-                logger.error(f"音声のチャンク分割に失敗しました: {str(e)}")
-                # チャンク分割に失敗した場合は単一チャンクとして扱う
-                chunks = [preprocessed_audio]
-                logger.info("チャンク分割をスキップし、単一チャンクとして処理します")
+            chunks = self._split_audio_into_chunks_safely(
+                preprocessed_audio, chunk_duration, long_speech_mode
+            )
 
             # 各チャンクを認識
-            chunk_results = []
-
-            # 処理するチャンクのインデックスリスト
-            chunk_indices = list(range(len(chunks)))
-
-            # 並列処理の設定
-            if parallel_processing and len(chunk_indices) > 1:
-                logger.info(f"並列処理を開始します（ワーカー数: {max_workers}）")
-
-                # 並列処理用の関数
-                def process_chunk(chunk_idx):
-                    try:
-                        chunk = chunks[chunk_idx]
-                        logger.info(
-                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
-                        )
-
-                        # チャンク認識
-                        result = self._recognize_chunk(
-                            chunk,
-                            engine=engine,
-                            language=language,
-                            recognition_attempts=recognition_attempts,
-                            min_word_count=min_word_count,
-                            whisper_model_size=whisper_model_size,
-                            whisper_detect_language=whisper_detect_language,
-                        )
-
-                        # コールバック関数があれば呼び出し（リアルタイムモード用）
-                        if on_chunk_processed:
-                            on_chunk_processed(chunk_idx, len(chunks), result, len(chunk) / 1000)
-
-                        logger.info(
-                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
-                        )
-                        return result
-                    except Exception as e:
-                        logger.error(
-                            f"チャンク {chunk_idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}"
-                        )
-                        return ""
-
-                # 並列処理実行
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    chunk_results = list(executor.map(process_chunk, chunk_indices))
-            else:
-                logger.info("逐次処理を開始します")
-                for idx, chunk in enumerate(chunks):
-                    try:
-                        logger.info(
-                            f"チャンク {idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
-                        )
-
-                        # チャンク認識
-                        result = self._recognize_chunk(
-                            chunk,
-                            engine=engine,
-                            language=language,
-                            recognition_attempts=recognition_attempts,
-                            min_word_count=min_word_count,
-                            whisper_model_size=whisper_model_size,
-                            whisper_detect_language=whisper_detect_language,
-                        )
-
-                        # コールバック関数があれば呼び出し（リアルタイムモード用）
-                        if on_chunk_processed:
-                            on_chunk_processed(idx, len(chunks), result, len(chunk) / 1000)
-
-                        chunk_results.append(result)
-                        logger.info(
-                            f"チャンク {idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"チャンク {idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}"
-                        )
-                        chunk_results.append("")
+            chunk_results = self._process_chunks(
+                chunks,
+                engine,
+                language,
+                recognition_attempts,
+                min_word_count,
+                parallel_processing,
+                max_workers,
+                on_chunk_processed,
+                whisper_model_size,
+                whisper_detect_language,
+            )
 
             # 全チャンク結果を結合
             transcript = " ".join(chunk_results)
@@ -268,7 +167,219 @@ class AudioProcessorV2(IAudioProcessor):
         except Exception as e:
             logger.error(f"音声処理中にエラーが発生しました: {str(e)}")
             logger.error(traceback.format_exc())
-            raise
+            return "", [], []
+
+    def _log_ffmpeg_status(self, ffmpeg_available: bool, file_path: str):
+        """FFmpegの利用可能性と関連する警告をログに出力"""
+        if not ffmpeg_available:
+            logger.warning(
+                "FFmpegが利用できないため、一部の機能が制限されます。mp3/mp4ファイルの処理やノイズ削減が制限される可能性があります。"
+            )
+            logger.warning("これはStreamlit Cloudでの制限である可能性があります。")
+
+            # 可能であれば.wavファイルを使用することを推奨
+            if os.path.splitext(file_path)[1].lower() not in [".wav"]:
+                logger.warning(
+                    "FFmpegがない環境では.wavファイルの使用を推奨します。mp3/mp4ファイルの処理が失敗する可能性があります。"
+                )
+
+    def _load_audio_file_safely(
+        self, file_path: str, start_minute: int, end_minute: int
+    ) -> Optional[AudioSegment]:
+        """安全に音声ファイルを読み込む"""
+        try:
+            logger.info(f"音声ファイルを読み込み中: {file_path}")
+            audio_data = self._load_audio_file(file_path, start_minute, end_minute)
+            logger.info(f"音声ファイルの読み込みに成功しました: 長さ {len(audio_data)/1000:.2f}秒")
+            return audio_data
+        except Exception as e:
+            logger.error(f"音声ファイルの読み込みに失敗しました: {str(e)}")
+            return None
+
+    def _preprocess_audio_safely(
+        self,
+        audio_data: AudioSegment,
+        reduce_noise: bool,
+        remove_silence: bool,
+        audio_enhancement: bool,
+    ) -> AudioSegment:
+        """安全に音声の前処理を行う"""
+        try:
+            logger.info("音声の前処理を開始します...")
+            preprocessed_audio = self.preprocess_audio(
+                audio_data, reduce_noise, remove_silence, audio_enhancement
+            )
+            logger.info(
+                f"音声の前処理が完了しました: 処理後の長さ {len(preprocessed_audio)/1000:.2f}秒"
+            )
+            return preprocessed_audio
+        except Exception as e:
+            logger.error(f"音声の前処理に失敗しました: {str(e)}")
+            # 前処理に失敗した場合は元の音声データを使用
+            logger.info("前処理をスキップし、オリジナルの音声を使用します")
+            return audio_data
+
+    def _split_audio_into_chunks_safely(
+        self, audio_data: AudioSegment, chunk_duration: int, long_speech_mode: bool
+    ) -> List[AudioSegment]:
+        """安全に音声のチャンク分割を行う"""
+        try:
+            logger.info("音声のチャンク分割を開始します...")
+            chunks = self.split_audio_into_chunks(
+                audio_data,
+                max_chunk_duration=chunk_duration * 1000,  # 秒からミリ秒に変換
+                long_speech_mode=long_speech_mode,
+            )
+            logger.info(f"音声を {len(chunks)} チャンクに分割しました")
+            return chunks
+        except Exception as e:
+            logger.error(f"音声のチャンク分割に失敗しました: {str(e)}")
+            # チャンク分割に失敗した場合は単一チャンクとして扱う
+            logger.info("チャンク分割をスキップし、単一チャンクとして処理します")
+            return [audio_data]
+
+    def _process_chunks(
+        self,
+        chunks: List[AudioSegment],
+        engine: str,
+        language: str,
+        recognition_attempts: int,
+        min_word_count: int,
+        parallel_processing: bool,
+        max_workers: int,
+        on_chunk_processed: Optional[Callable],
+        whisper_model_size: str,
+        whisper_detect_language: bool,
+    ) -> List[str]:
+        """チャンクを処理して認識結果を返す"""
+        chunk_results = []
+        chunk_indices = list(range(len(chunks)))
+
+        # 並列処理の場合
+        if parallel_processing and len(chunk_indices) > 1:
+            chunk_results = self._process_chunks_parallel(
+                chunks,
+                chunk_indices,
+                engine,
+                language,
+                recognition_attempts,
+                min_word_count,
+                max_workers,
+                on_chunk_processed,
+                whisper_model_size,
+                whisper_detect_language,
+            )
+        else:
+            # 逐次処理の場合
+            chunk_results = self._process_chunks_sequential(
+                chunks,
+                engine,
+                language,
+                recognition_attempts,
+                min_word_count,
+                on_chunk_processed,
+                whisper_model_size,
+                whisper_detect_language,
+            )
+
+        return chunk_results
+
+    def _process_chunks_parallel(
+        self,
+        chunks: List[AudioSegment],
+        chunk_indices: List[int],
+        engine: str,
+        language: str,
+        recognition_attempts: int,
+        min_word_count: int,
+        max_workers: int,
+        on_chunk_processed: Optional[Callable],
+        whisper_model_size: str,
+        whisper_detect_language: bool,
+    ) -> List[str]:
+        """チャンクを並列処理する"""
+        logger.info(f"並列処理を開始します（ワーカー数: {max_workers}）")
+
+        # 並列処理用の関数
+        def process_chunk(chunk_idx):
+            try:
+                chunk = chunks[chunk_idx]
+                logger.info(
+                    f"チャンク {chunk_idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
+                )
+
+                # チャンク認識
+                result = self._recognize_chunk(
+                    chunk,
+                    engine=engine,
+                    language=language,
+                    recognition_attempts=recognition_attempts,
+                    min_word_count=min_word_count,
+                    whisper_model_size=whisper_model_size,
+                    whisper_detect_language=whisper_detect_language,
+                )
+
+                # コールバック関数があれば呼び出し（リアルタイムモード用）
+                if on_chunk_processed:
+                    on_chunk_processed(chunk_idx, len(chunks), result, len(chunk) / 1000)
+
+                logger.info(
+                    f"チャンク {chunk_idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
+                )
+                return result
+            except Exception as e:
+                logger.error(f"チャンク {chunk_idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}")
+                return ""
+
+        # 並列処理実行
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(process_chunk, chunk_indices))
+
+    def _process_chunks_sequential(
+        self,
+        chunks: List[AudioSegment],
+        engine: str,
+        language: str,
+        recognition_attempts: int,
+        min_word_count: int,
+        on_chunk_processed: Optional[Callable],
+        whisper_model_size: str,
+        whisper_detect_language: bool,
+    ) -> List[str]:
+        """チャンクを逐次処理する"""
+        logger.info("逐次処理を開始します")
+        chunk_results = []
+
+        for idx, chunk in enumerate(chunks):
+            try:
+                logger.info(
+                    f"チャンク {idx+1}/{len(chunks)} の処理を開始します（長さ: {len(chunk)/1000:.2f}秒）"
+                )
+
+                # チャンク認識
+                result = self._recognize_chunk(
+                    chunk,
+                    engine=engine,
+                    language=language,
+                    recognition_attempts=recognition_attempts,
+                    min_word_count=min_word_count,
+                    whisper_model_size=whisper_model_size,
+                    whisper_detect_language=whisper_detect_language,
+                )
+
+                # コールバック関数があれば呼び出し（リアルタイムモード用）
+                if on_chunk_processed:
+                    on_chunk_processed(idx, len(chunks), result, len(chunk) / 1000)
+
+                chunk_results.append(result)
+                logger.info(
+                    f"チャンク {idx+1}/{len(chunks)} の処理が完了しました: {len(result.split())} 単語認識"
+                )
+            except Exception as e:
+                logger.error(f"チャンク {idx+1}/{len(chunks)} の処理に失敗しました: {str(e)}")
+                chunk_results.append("")
+
+        return chunk_results
 
     def _recognize_chunk(
         self,
@@ -308,61 +419,44 @@ class AudioProcessorV2(IAudioProcessor):
             return ""
 
         # 言語コードの調整（Whisperは2文字コード、GoogleとSphinxは地域コードあり）
-        lang_code = language
-        if engine.lower().startswith("whisper"):
-            # Whisper用の言語コード調整
-            if "-" in language:
-                lang_code = language.split("-")[0]
-            logger.info(f"Whisperに適した言語コードに調整: {language} -> {lang_code}")
+        lang_code = self._adjust_language_code(language, engine)
 
         # 選択されたエンジンで認識
         for attempt in range(recognition_attempts):
-            try:
-                logger.info(f"認識試行 {attempt + 1}/{recognition_attempts}")
+            result = self._attempt_recognition(
+                attempt,
+                recognition_attempts,
+                chunk,
+                engine,
+                lang_code,
+                language,
+                whisper_model_size,
+                whisper_detect_language,
+            )
 
-                if engine == "Sphinx":
-                    result = self._recognize_sphinx(chunk, language)
-                elif engine == "Google":
-                    result = self._recognize_google(chunk, language)
-                elif engine == "Whisper":
-                    result = self._recognize_with_whisper(
-                        chunk, lang_code, whisper_model_size, whisper_detect_language
-                    )
-                elif engine == "FasterWhisper":
-                    result = self._recognize_with_faster_whisper(
-                        chunk, lang_code, whisper_model_size, whisper_detect_language
-                    )
-                else:
-                    # デフォルトのエンジンとしてWhisperを使用
-                    logger.warning(f"未知のエンジン: {engine}, Whisperを使用します")
-                    result = self._recognize_with_whisper(
-                        chunk, lang_code, whisper_model_size, whisper_detect_language
-                    )
+            if not result:
+                continue
 
-                # 認識結果を整形（余分な空白の削除など）
-                result = self._format_recognition_result(result)
+            # 認識結果を整形（余分な空白の削除など）
+            result = self._format_recognition_result(result)
 
-                # 単語数をカウント
-                word_count = len(result.split())
+            # 単語数をカウント
+            word_count = len(result.split())
 
-                logger.info(
-                    f"認識結果: {word_count}単語 ('{result[:50]}{'...' if len(result) > 50 else ''}')"
-                )
+            logger.info(
+                f"認識結果: {word_count}単語 ('{result[:50]}{'...' if len(result) > 50 else ''}')"
+            )
 
-                # より多くの単語を含む結果を保持
-                if word_count > best_word_count:
-                    best_result = result
-                    best_word_count = word_count
-                    logger.info(f"より良い結果を更新: {best_word_count}単語")
+            # より多くの単語を含む結果を保持
+            if word_count > best_word_count:
+                best_result = result
+                best_word_count = word_count
+                logger.info(f"より良い結果を更新: {best_word_count}単語")
 
-                # 十分な単語数があれば早期終了
-                if word_count >= min_word_count:
-                    logger.info(f"十分な単語数 ({word_count} >= {min_word_count}) のため認識を終了")
-                    break
-
-            except Exception as e:
-                logger.error(f"認識試行 {attempt + 1} で例外が発生: {str(e)}")
-                # 続行して他の試行を実行
+            # 十分な単語数があれば早期終了
+            if word_count >= min_word_count:
+                logger.info(f"十分な単語数 ({word_count} >= {min_word_count}) のため認識を終了")
+                break
 
         # 最終的な結果を返す
         if best_word_count > 0:
@@ -370,6 +464,60 @@ class AudioProcessorV2(IAudioProcessor):
             return best_result
         else:
             logger.warning("チャンク認識に失敗: 有効な結果なし")
+            return ""
+
+    def _adjust_language_code(self, language: str, engine: str) -> str:
+        """エンジンに合わせて言語コードを調整する"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        lang_code = language
+
+        if engine.lower().startswith("whisper"):
+            # Whisper用の言語コード調整
+            if "-" in language:
+                lang_code = language.split("-")[0]
+            logger.info(f"Whisperに適した言語コードに調整: {language} -> {lang_code}")
+
+        return lang_code
+
+    def _attempt_recognition(
+        self,
+        attempt: int,
+        max_attempts: int,
+        chunk: AudioSegment,
+        engine: str,
+        lang_code: str,
+        language: str,
+        whisper_model_size: str,
+        whisper_detect_language: bool,
+    ) -> str:
+        """認識エンジンを使用してチャンクの認識を試行する"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(f"認識試行 {attempt + 1}/{max_attempts}")
+
+        try:
+            # エンジン名の小文字化して比較することで大文字小文字の違いを無視
+            engine_lower = engine.lower()
+
+            if engine_lower == "sphinx":
+                return self._recognize_sphinx(chunk, language)
+            elif engine_lower == "google":
+                return self._recognize_google(chunk, language)
+            elif engine_lower == "whisper":
+                return self._recognize_with_whisper(
+                    chunk, lang_code, whisper_model_size, whisper_detect_language
+                )
+            elif engine_lower == "fasterwhisper":
+                return self._recognize_with_faster_whisper(
+                    chunk, lang_code, whisper_model_size, whisper_detect_language
+                )
+            else:
+                # デフォルトのエンジンとしてWhisperを使用
+                logger.warning(f"未知のエンジン: {engine}, Whisperを使用します")
+                return self._recognize_with_whisper(
+                    chunk, lang_code, whisper_model_size, whisper_detect_language
+                )
+        except Exception as e:
+            logger.error(f"認識試行 {attempt + 1} で例外が発生: {str(e)}")
             return ""
 
     def _recognize_sphinx(self, chunk: AudioSegment, language: str) -> str:
@@ -429,88 +577,111 @@ class AudioProcessorV2(IAudioProcessor):
             f"Whisperエンジンで認識を開始: 言語={language}, モデル={model_size}, 言語検出={detect_language}"
         )
 
-        # モデルディレクトリを環境変数として設定（モデルディレクトリパラメータが直接使えない場合の対応）
+        # 環境変数のバックアップと設定
         original_model_cache = os.environ.get("WHISPER_MODEL_CACHE", "")
+        temp_path = None
+        result = ""
+
+        # モデルディレクトリの設定
         if self.whisper_model_cache_dir and os.path.exists(self.whisper_model_cache_dir):
             os.environ["OPENAI_WHISPER_CACHE"] = self.whisper_model_cache_dir
-            # whisperライブラリが_download_rootを使用する場合の互換性対応
-            try:
-                import whisper
+            # Whisperの_download_rootを設定（利用可能な場合）
+            self._setup_whisper_download_root()
 
-                if hasattr(whisper, "_download_root"):
-                    whisper._download_root = self.whisper_model_cache_dir
-                    logger.info(f"Whisper _download_rootを設定: {self.whisper_model_cache_dir}")
-            except ImportError:
-                logger.warning(
-                    "whisperモジュールをインポートできません。SpeechRecognitionのみを試行します。"
+        try:
+            # 音声チャンクをWAVに変換
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                chunk.export(f.name, format="wav")
+                temp_path = f.name
+
+            # SpeechRecognitionによる認識を試行
+            result = self._try_speech_recognition_whisper(
+                temp_path, model_size, language, detect_language
+            )
+
+            # SpeechRecognitionが失敗した場合、直接Whisper APIを使用
+            if not result:
+                result = self._try_direct_whisper_api(
+                    temp_path, model_size, language, detect_language
                 )
 
-        # 音声チャンクをWAVに変換
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            chunk.export(f.name, format="wav")
-            temp_path = f.name
+            return result
 
-            try:
-                # 1. まず標準のSpeechRecognitionで試行
-                try:
-                    with sr.AudioFile(temp_path) as source:
-                        audio = self.recognizer.record(source)
-                        # model_dirパラメータを削除し、環境変数経由でモデルパスを指定
-                        result = self.recognizer.recognize_whisper(
-                            audio, model=model_size, language=None if detect_language else language
-                        )
-                        logger.info(f"SpeechRecognition Whisper認識完了: {len(result.split())}単語")
-                        return result
-                except Exception as sr_error:
-                    logger.warning(f"SpeechRecognitionでのWhisper認識に失敗: {str(sr_error)}")
-                    logger.info("直接Whisper APIを使用して再試行します...")
+        except Exception as e:
+            logger.error(f"Whisper認識処理中にエラーが発生: {str(e)}")
+            return ""
 
-                    # 2. SpeechRecognitionが失敗した場合、直接WhisperモジュールでAPIを呼び出す
-                    try:
-                        import whisper
-
-                        logger.info(
-                            f"直接Whisperモジュールを使用: {getattr(whisper, '__version__', '不明')}"
-                        )
-
-                        # モデルのロード
-                        model = whisper.load_model(
-                            model_size, download_root=self.whisper_model_cache_dir
-                        )
-                        logger.info(f"Whisperモデルをロードしました: {model_size}")
-
-                        # 言語設定
-                        language_code = None if detect_language else language
-
-                        # 音声認識の実行
-                        result = model.transcribe(temp_path, language=language_code, verbose=False)
-
-                        # 認識結果の取得
-                        if isinstance(result, dict) and "text" in result:
-                            transcript = result["text"]
-                            logger.info(f"直接WhisperAPI認識完了: {len(transcript.split())}単語")
-                            return transcript
-                        else:
-                            logger.error(f"Whisper結果が予期しない形式: {type(result)}")
-                            return ""
-                    except ImportError as imp_err:
-                        logger.error(f"Whisperモジュールをインポートできません: {imp_err}")
-                        return ""
-                    except Exception as whisper_err:
-                        logger.error(f"直接WhisperAPI使用中にエラー: {whisper_err}")
-                        return ""
-            except Exception as e:
-                logger.error(f"Whisper認識中にエラーが発生: {str(e)}")
-                return ""
-            finally:
-                # 一時ファイルの削除
+        finally:
+            # 一時ファイルの削除
+            if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
                 except Exception as del_err:
                     logger.warning(f"一時ファイル削除に失敗: {del_err}")
-                # 環境変数を元に戻す
-                if original_model_cache:
-                    os.environ["WHISPER_MODEL_CACHE"] = original_model_cache
+
+            # 環境変数を元に戻す
+            if original_model_cache:
+                os.environ["WHISPER_MODEL_CACHE"] = original_model_cache
+
+    def _setup_whisper_download_root(self):
+        """Whisperモジュールの_download_rootを設定する"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        try:
+            import whisper
+
+            if hasattr(whisper, "_download_root"):
+                whisper._download_root = self.whisper_model_cache_dir
+                logger.info(f"Whisper _download_rootを設定: {self.whisper_model_cache_dir}")
+        except ImportError:
+            logger.warning("whisperモジュールをインポートできません")
+
+    def _try_speech_recognition_whisper(self, audio_path, model_size, language, detect_language):
+        """SpeechRecognitionでWhisper認識を試行"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        try:
+            with sr.AudioFile(audio_path) as source:
+                audio = self.recognizer.record(source)
+                result = self.recognizer.recognize_whisper(
+                    audio, model=model_size, language=None if detect_language else language
+                )
+                logger.info(f"SpeechRecognition Whisper認識完了: {len(result.split())}単語")
+                return result
+        except Exception as sr_error:
+            logger.warning(f"SpeechRecognitionでのWhisper認識に失敗: {str(sr_error)}")
+            return ""
+
+    def _try_direct_whisper_api(self, audio_path, model_size, language, detect_language):
+        """直接WhisperモジュールのAPIを呼び出す"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        try:
+            import whisper
+
+            logger.info(f"直接Whisperモジュールを使用: {getattr(whisper, '__version__', '不明')}")
+
+            # モデルのロード
+            model = whisper.load_model(model_size, download_root=self.whisper_model_cache_dir)
+            logger.info(f"Whisperモデルをロードしました: {model_size}")
+
+            # 言語設定
+            language_code = None if detect_language else language
+
+            # 音声認識の実行
+            result = model.transcribe(audio_path, language=language_code, verbose=False)
+
+            # 認識結果の取得
+            if isinstance(result, dict) and "text" in result:
+                transcript = result["text"]
+                logger.info(f"直接WhisperAPI認識完了: {len(transcript.split())}単語")
+                return transcript
+            else:
+                logger.error(f"Whisper結果が予期しない形式: {type(result)}")
+                return ""
+        except ImportError as imp_err:
+            logger.error(f"Whisperモジュールをインポートできません: {imp_err}")
+            return ""
+        except Exception as whisper_err:
+            logger.error(f"直接WhisperAPI使用中にエラー: {whisper_err}")
+            return ""
 
     def _recognize_with_faster_whisper(
         self, chunk: AudioSegment, language: str, model_size: str, detect_language: bool
@@ -521,77 +692,92 @@ class AudioProcessorV2(IAudioProcessor):
             f"FasterWhisperエンジンで認識を開始: 言語={language}, モデル={model_size}, 言語検出={detect_language}"
         )
 
-        # モデルディレクトリを環境変数として設定（モデルディレクトリパラメータが直接使えない場合の対応）
+        # 環境変数のバックアップと設定
         original_model_cache = os.environ.get("WHISPER_MODEL_CACHE", "")
+        temp_path = None
+        result = ""
+
+        # モデルディレクトリの設定
         if self.whisper_model_cache_dir and os.path.exists(self.whisper_model_cache_dir):
-            # HuggingFace HubのCacheディレクトリとしても設定
-            os.environ["HF_HOME"] = self.whisper_model_cache_dir
-            os.environ["TRANSFORMERS_CACHE"] = os.path.join(
-                self.whisper_model_cache_dir, "transformers"
+            # HuggingFace HubのCacheディレクトリ設定
+            self._setup_huggingface_cache()
+            # FasterWhisperのダウンロード処理を最適化
+            self._setup_faster_whisper_download()
+
+        try:
+            # 音声チャンクをWAVに変換
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                chunk.export(f.name, format="wav")
+                temp_path = f.name
+
+            # 音声認識を実行
+            with sr.AudioFile(temp_path) as source:
+                audio = self.recognizer.record(source)
+                result = self.recognizer.recognize_faster_whisper(
+                    audio, model=model_size, language=None if detect_language else language
+                )
+                logger.info(f"FasterWhisper認識完了: {len(result.split())}単語")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"FasterWhisper認識中にエラーが発生: {str(e)}")
+            return ""
+
+        finally:
+            # 一時ファイルの削除
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception as del_err:
+                    logger.warning(f"一時ファイル削除に失敗: {del_err}")
+
+            # 環境変数を元に戻す
+            if original_model_cache:
+                os.environ["WHISPER_MODEL_CACHE"] = original_model_cache
+
+    def _setup_huggingface_cache(self):
+        """HuggingFace関連のキャッシュディレクトリを設定"""
+        os.environ["HF_HOME"] = self.whisper_model_cache_dir
+        os.environ["TRANSFORMERS_CACHE"] = os.path.join(
+            self.whisper_model_cache_dir, "transformers"
+        )
+
+    def _setup_faster_whisper_download(self):
+        """FasterWhisperのダウンロード処理を最適化"""
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        try:
+            import faster_whisper
+
+            logger.info(
+                f"Faster Whisperをインポートしました: {faster_whisper.__version__ if hasattr(faster_whisper, '__version__') else '不明'}"
             )
 
-            # faster-whisperモジュールのモデルパス環境変数対応
-            try:
-                # モデルパスを直接修正するためにimportする
-                import faster_whisper
+            # FasterWhisperのClient初期化をパッチする
+            if hasattr(faster_whisper, "download_model"):
+                original_download = faster_whisper.download_model
 
-                logger.info(
-                    f"Faster Whisperをインポートしました: {faster_whisper.__version__ if hasattr(faster_whisper, '__version__') else '不明'}"
-                )
-
-                # FasterWhisperのClient初期化をパッチする
-                # proxiesエラーを回避
-                if hasattr(faster_whisper, "download_model"):
-                    original_download = faster_whisper.download_model
-
-                    def patched_download_model(model_size, cache_dir=None, local_files_only=False):
-                        try:
-                            logger.info(
-                                f"FasterWhisperモデルをダウンロード: {model_size} -> {cache_dir or self.whisper_model_cache_dir}"
+                def patched_download_model(model_size, cache_dir=None, local_files_only=False):
+                    try:
+                        logger.info(
+                            f"FasterWhisperモデルをダウンロード: {model_size} -> {cache_dir or self.whisper_model_cache_dir}"
+                        )
+                        return original_download(
+                            model_size, cache_dir=cache_dir, local_files_only=local_files_only
+                        )
+                    except TypeError as e:
+                        if "proxies" in str(e):
+                            logger.warning(
+                                f"proxiesパラメータエラーを検出、代替手法でダウンロードします: {e}"
                             )
-                            return original_download(
-                                model_size, cache_dir=cache_dir, local_files_only=local_files_only
-                            )
-                        except TypeError as e:
-                            if "proxies" in str(e):
-                                logger.warning(
-                                    f"proxiesパラメータエラーを検出、代替手法でダウンロードします: {e}"
-                                )
-                                # 環境変数を使用してキャッシュディレクトリを指定
-                                return None
-                            raise
+                            return None
+                        raise
 
-                    # モンキーパッチ適用
-                    faster_whisper.download_model = patched_download_model
-                    logger.info("FasterWhisperのdownload_modelをパッチしました")
-            except ImportError as e:
-                logger.warning(f"faster-whisperモジュールが見つかりません: {str(e)}")
-
-        # 音声チャンクをWAVに変換
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            chunk.export(f.name, format="wav")
-
-            try:
-                with sr.AudioFile(f.name) as source:
-                    audio = self.recognizer.record(source)
-                    # model_dirパラメータを削除し、環境変数経由でモデルパスを指定
-                    result = self.recognizer.recognize_faster_whisper(
-                        audio, model=model_size, language=None if detect_language else language
-                    )
-                    logger.info(f"FasterWhisper認識完了: {len(result.split())}単語")
-                    return result
-            except Exception as e:
-                logger.error(f"FasterWhisper認識中にエラーが発生: {str(e)}")
-                return ""
-            finally:
-                # 一時ファイルの削除
-                try:
-                    os.unlink(f.name)
-                except:
-                    pass
-                # 環境変数を元に戻す
-                if original_model_cache:
-                    os.environ["WHISPER_MODEL_CACHE"] = original_model_cache
+                # モンキーパッチ適用
+                faster_whisper.download_model = patched_download_model
+                logger.info("FasterWhisperのdownload_modelをパッチしました")
+        except ImportError as e:
+            logger.warning(f"faster-whisperモジュールが見つかりません: {str(e)}")
 
     def _format_recognition_result(self, text: str) -> str:
         """認識結果のテキストを整形する"""
