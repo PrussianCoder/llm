@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #!/usr/bin/env python3
 """
 音声ファイル処理アプリケーション
@@ -10,7 +12,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from __future__ import annotations
 
 import traceback
 from typing import Callable, Dict, List
