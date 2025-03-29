@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 import tempfile
 import time
 import traceback
@@ -356,38 +357,80 @@ class AudioProcessorV2(IAudioProcessor):
         self, file_path: str, start_minute: int = 0, end_minute: int = 0
     ) -> AudioSegment:
         """
-        音声ファイルを読み込む
+        音声/動画ファイルを読み込む
 
         Args:
-            file_path: 音声ファイルのパス
-            start_minute: 処理を開始する時間（分）、0の場合は最初から
-            end_minute: 処理を終了する時間（分）、0の場合は最後まで
+            file_path: ファイルパス
+            start_minute: 開始時間（分）
+            end_minute: 終了時間（分）（0の場合は最後まで）
 
         Returns:
-            AudioSegment: 読み込んだ音声データ
+            AudioSegment: 読み込まれた音声データ
         """
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        logger.info(f"ファイルを読み込み中: {os.path.basename(file_path)}")
+
         # ファイル拡張子を取得
         ext = os.path.splitext(file_path)[1].lower()
 
-        # キャッシュは使用しない
-        if ext == ".mp4":
-            # MP4の場合は一度オーディオを抽出
-            temp_mp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            temp_mp3.close()
+        # MP4やその他の動画ファイルの場合、音声を抽出
+        if ext in [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"]:
+            # FFmpegが利用可能かチェック
+            ffmpeg_available = self._check_ffmpeg_available()
 
-            try:
-                # FFmpegを使用してMP4からMP3を抽出
-                os.system(f'ffmpeg -i "{file_path}" -q:a 0 -map a "{temp_mp3.name}" -y')
-                audio_data = AudioSegment.from_mp3(temp_mp3.name)
-            finally:
-                # 一時ファイルを削除
-                os.unlink(temp_mp3.name)
+            if ffmpeg_available:
+                # FFmpegを使用して音声を抽出
+                temp_mp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                temp_mp3.close()
+
+                try:
+                    # FFmpegを使用してMP4からMP3を抽出
+                    os.system(f'ffmpeg -i "{file_path}" -q:a 0 -map a "{temp_mp3.name}" -y')
+                    audio_data = AudioSegment.from_mp3(temp_mp3.name)
+                except Exception as e:
+                    logger.error(f"FFmpegでの音声抽出に失敗しました: {str(e)}")
+                    # 直接ファイルを開こうとする
+                    try:
+                        audio_data = AudioSegment.from_file(file_path)
+                        logger.info("代替方法でファイルを読み込みました")
+                    except Exception as e2:
+                        logger.error(f"ファイルの読み込みに失敗しました: {str(e2)}")
+                        raise ValueError(
+                            f"ファイル '{os.path.basename(file_path)}' の読み込みに失敗しました。サポートされている形式かご確認ください。"
+                        )
+                finally:
+                    # 一時ファイルを削除
+                    if os.path.exists(temp_mp3.name):
+                        os.unlink(temp_mp3.name)
+            else:
+                # FFmpegが利用できない場合は直接ファイルを開こうとする
+                logger.warning("FFmpegが利用できないため、直接ファイルを読み込みます")
+                try:
+                    audio_data = AudioSegment.from_file(file_path)
+                    logger.info("代替方法でファイルを読み込みました")
+                except Exception as e:
+                    logger.error(f"ファイルの読み込みに失敗しました: {str(e)}")
+                    raise ValueError(
+                        f"ファイル '{os.path.basename(file_path)}' の読み込みに失敗しました。サポートされている形式かご確認ください。FFmpegをインストールするとより多くの形式をサポートできます。"
+                    )
 
         elif ext == ".mp3":
-            audio_data = AudioSegment.from_mp3(file_path)
+            try:
+                audio_data = AudioSegment.from_mp3(file_path)
+            except Exception as e:
+                logger.error(f"MP3ファイルの読み込みに失敗しました: {str(e)}")
+                raise ValueError(
+                    f"MP3ファイル '{os.path.basename(file_path)}' の読み込みに失敗しました。FFmpegがインストールされているか確認してください。"
+                )
         else:
             # その他の形式（wav等）
-            audio_data = AudioSegment.from_file(file_path)
+            try:
+                audio_data = AudioSegment.from_file(file_path)
+            except Exception as e:
+                logger.error(f"音声ファイルの読み込みに失敗しました: {str(e)}")
+                raise ValueError(
+                    f"ファイル '{os.path.basename(file_path)}' の読み込みに失敗しました。サポートされている形式かご確認ください。"
+                )
 
         # 時間範囲の指定がある場合は切り出し
         if start_minute > 0 or (end_minute > 0 and end_minute > start_minute):
@@ -410,6 +453,25 @@ class AudioProcessorV2(IAudioProcessor):
 
         return audio_data
 
+    def _check_ffmpeg_available(self) -> bool:
+        """
+        FFmpegが利用可能かどうかを確認する
+
+        Returns:
+            bool: FFmpegが利用可能な場合はTrue、そうでない場合はFalse
+        """
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
+        try:
+            # FFmpegが存在するかチェック
+            subprocess.run(
+                ["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+            )
+            logger.info("FFmpegが利用可能です")
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            logger.warning("FFmpegが見つかりません。一部の機能が制限されます。")
+            return False
+
     def preprocess_audio(
         self,
         audio_data: AudioSegment,
@@ -429,6 +491,7 @@ class AudioProcessorV2(IAudioProcessor):
         Returns:
             AudioSegment: 前処理された音声データ
         """
+        logger = LoggingConfig.get_logger(self.__class__.__name__)
         logger.info("音声前処理を開始します")
 
         # サンプルレートを16kHzに変更（音声認識に最適）
@@ -456,28 +519,36 @@ class AudioProcessorV2(IAudioProcessor):
 
         # 低周波ノイズの削減（ハイパスフィルター）
         if reduce_noise:
-            # pydubでハイパスフィルターを直接適用する方法がないため、
-            # FFmpeg呼び出しを使用する代替手段として処理
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_in:
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_out:
-                    temp_in_name = temp_in.name
-                    temp_out_name = temp_out.name
+            # FFmpegが利用可能かチェック
+            ffmpeg_available = self._check_ffmpeg_available()
 
-            try:
-                # 一時ファイルに書き出し
-                audio_data.export(temp_in_name, format="wav")
+            if ffmpeg_available:
+                # pydubでハイパスフィルターを直接適用する方法がないため、
+                # FFmpeg呼び出しを使用する代替手段として処理
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_in:
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_out:
+                        temp_in_name = temp_in.name
+                        temp_out_name = temp_out.name
 
-                # FFmpegで100Hz以下の周波数をカット（ハイパスフィルター）
-                os.system(f'ffmpeg -i "{temp_in_name}" -af "highpass=f=100" "{temp_out_name}" -y')
+                try:
+                    # 一時ファイルに書き出し
+                    audio_data.export(temp_in_name, format="wav")
 
-                # 処理された音声を読み込み
-                audio_data = AudioSegment.from_wav(temp_out_name)
-            finally:
-                # 一時ファイルを削除
-                if os.path.exists(temp_in_name):
-                    os.unlink(temp_in_name)
-                if os.path.exists(temp_out_name):
-                    os.unlink(temp_out_name)
+                    # FFmpegで100Hz以下の周波数をカット（ハイパスフィルター）
+                    os.system(
+                        f'ffmpeg -i "{temp_in_name}" -af "highpass=f=100" "{temp_out_name}" -y'
+                    )
+
+                    # 処理された音声を読み込み
+                    audio_data = AudioSegment.from_wav(temp_out_name)
+                finally:
+                    # 一時ファイルを削除
+                    if os.path.exists(temp_in_name):
+                        os.unlink(temp_in_name)
+                    if os.path.exists(temp_out_name):
+                        os.unlink(temp_out_name)
+            else:
+                logger.warning("FFmpegが利用できないため、ノイズ削減をスキップします")
 
         # 先頭と末尾の無音部分をトリミング
         if remove_silence:
