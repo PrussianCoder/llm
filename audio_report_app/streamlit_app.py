@@ -61,6 +61,13 @@ try:
     sys.path.append(app_path)
     logger.info(f"アプリパス: {app_path}")
 
+    # HuggingFaceの環境変数を設定
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    logger.info("HuggingFace環境変数を設定しました")
+
     # 利用可能なパッケージとバージョンを表示
     import pkg_resources
 
@@ -72,7 +79,7 @@ except Exception as e:
     traceback.print_exc()
 
 # 簡易テストモード
-TEST_MODE = False
+TEST_MODE = True
 
 if TEST_MODE:
     try:
