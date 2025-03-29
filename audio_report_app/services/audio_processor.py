@@ -88,6 +88,20 @@ class AudioProcessorV2(IAudioProcessor):
             logger.info(f"音声ファイルの処理を開始します: {file_path}")
             logger.info(f"使用するエンジン: {engine}, 言語: {language}")
 
+            # FFmpegの利用可能性をチェック
+            ffmpeg_available = self._check_ffmpeg_available()
+            if not ffmpeg_available:
+                logger.warning(
+                    "FFmpegが利用できないため、一部の機能が制限されます。mp3/mp4ファイルの処理やノイズ削減が制限される可能性があります。"
+                )
+                logger.warning("これはStreamlit Cloudでの制限である可能性があります。")
+
+                # 可能であれば.wavファイルを使用することを推奨
+                if os.path.splitext(file_path)[1].lower() not in [".wav"]:
+                    logger.warning(
+                        "FFmpegがない環境では.wavファイルの使用を推奨します。mp3/mp4ファイルの処理が失敗する可能性があります。"
+                    )
+
             # 音声ファイルの読み込み
             audio_data = self._load_audio_file(file_path, start_minute, end_minute)
 

@@ -1,6 +1,17 @@
+#!/usr/bin/env python3
+"""
+音声ファイル処理アプリケーション
+"""
+import os
+import sys
+
+# インポートパスを修正
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 from __future__ import annotations
 
-import os
 import traceback
 from typing import Callable, Dict, List
 
@@ -16,6 +27,16 @@ from utils.file_handler import FileHandler
 from utils.logging_config import LoggingConfig
 
 from ui.app_ui import AppUI
+
+# FFmpegフォールバック機能のインポート
+try:
+    from utils.pydub_utils import setup_pydub_fallback
+
+    # pydubのフォールバック機能を設定
+    setup_pydub_fallback()
+    print("pydubのフォールバック機能を設定しました。FFmpegがない環境でも基本機能が動作します。")
+except Exception as e:
+    print(f"pydubフォールバックの設定に失敗しました: {str(e)}")
 
 # 環境変数を読み込む
 load_dotenv()
