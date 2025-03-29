@@ -115,8 +115,9 @@ if TEST_MODE:
 else:
     try:
         # メインアプリケーションのインポートとセットアップ
-        from audio_report_app.main import AudioReportApp
-        from audio_report_app.services.audio_processor import AudioProcessorV2
+        from services.audio_processor import AudioProcessorV2
+
+        from main import AudioReportApp
 
         logger.info("アプリケーションクラスをインポートしました")
 
