@@ -296,7 +296,7 @@ def main():
         log_available_packages()
 
         # テストモード
-        TEST_MODE = True
+        TEST_MODE = False
 
         if TEST_MODE:
             run_test_mode(model_cache_dir)
